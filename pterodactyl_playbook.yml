@@ -48,38 +48,62 @@
         codename: noble
       when: not php_ppa.stat.exists
 
-    - name: Install PHP 8.1 and extensions
+    - name: Install PHP 8.2 and extensions
       apt:
         name:
-          - php8.1
-          - php8.1-cli
-          - php8.1-gd
-          - php8.1-mysql
-          - php8.1-mbstring
-          - php8.1-xml
-          - php8.1-curl
-          - php8.1-zip
-          - php8.1-fpm
-          - php8.1-bcmath
-          - php8.1-gmp
+          - php8.2
+          - php8.2-cli
+          - php8.2-gd
+          - php8.2-mysql
+          - php8.2-mbstring
+          - php8.2-xml
+          - php8.2-curl
+          - php8.2-zip
+          - php8.2-fpm
+          - php8.2-bcmath
+          - php8.2-gmp
+          - php8.2-intl
         state: present
 
-    - name: Create MySQL database
-      mysql_db:
-        name: panel
-        state: present
+    - name: Ensure Ansible user exists
+      user:
+        name: "{{ ansible_user }}"
+        groups: sudo
+        append: yes
+        shell: /bin/bash
 
-    - name: Create MySQL user
-      become: true
-      become_user: mysql
-      mysql_user:
-        name: pterodactyl
-        password: "{{ panel_db_password }}"
-        priv: 'panel.*:ALL'
-        host: '127.0.0.1'
-        state: present
-        login_user: sovi 
-        login_unix_socket: /var/run/mysqld/mysqld.sock
+    - name: Allow Ansible user passwordless sudo
+      lineinfile:
+        path: /etc/sudoers.d/{{ ansible_user }}
+        create: yes
+        line: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL"
+
+    - name: Ensure MySQL admin user exists
+      shell: |
+        mysql -u root -e "CREATE USER IF NOT EXISTS '{{ mysql_admin_user }}'@'localhost' IDENTIFIED BY '{{ mysql_admin_password }}';
+        GRANT ALL PRIVILEGES ON *.* TO '{{ mysql_admin_user }}'@'localhost' WITH GRANT OPTION;
+        FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+  
+    - name: Ensure MySQL database exists
+      shell: |
+        mysql -u {{ mysql_admin_user }} -p{{ mysql_admin_password }} -e "CREATE DATABASE IF NOT EXISTS panel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+      args:
+        executable: /bin/bash
+
+    - name: Ensure MySQL pterodactyl user exists
+      shell: |
+        mysql -u {{ mysql_admin_user }} -p{{ mysql_admin_password }} -e "CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '{{ panel_db_password }}';
+        GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
+        FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+
+    - name: Ensure /var/www/pterodactyl directory exists
+      file:
+        path: /var/www/pterodactyl
+        state: directory
 
     - name: Download Pterodactyl Panel
       get_url:
@@ -106,7 +130,7 @@
         remote_src: yes
 
     - name: Install Composer dependencies
-      command: composer install --no-dev --optimize-autoloader
+      shell: COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --ignore-platform-reqs
       args:
         chdir: /var/www/pterodactyl
 
@@ -116,7 +140,7 @@
         chdir: /var/www/pterodactyl
 
     - name: Run Environment Setup
-      command: php artisan p:environment:setup --author="admin@{{ domain_name }}" --url="https://{{ domain_name }}" --timezone="Europe/Berlin" --cache=redis
+      command: php artisan p:environment:setup --author="{{ panel_admin_email }}" --url="https://{{ domain_name }}" --timezone="Europe/Berlin" --cache=redis
       args:
         chdir: /var/www/pterodactyl
 
@@ -129,6 +153,20 @@
       command: php artisan migrate --seed --force
       args:
         chdir: /var/www/pterodactyl
+
+    - name: Check if Admin User exists in DB
+      shell: |
+        mysql -u {{ mysql_admin_user }} -p{{ mysql_admin_password }} -D panel -se "SELECT id FROM users WHERE email='{{ panel_admin_email }}';"
+      args:
+        executable: /bin/bash
+      register: user_exists
+      failed_when: false
+
+    - name: Create Admin User
+      command: php artisan p:user:make --email="{{ panel_admin_email }}" --username="{{ panel_admin_username }}" --name-first="{{ panel_admin_name_first }}" --name-last="{{ panel_admin_name_last }}" --password="{{ panel_admin_password }}" --admin=1
+      args:
+        chdir: /var/www/pterodactyl
+      when: user_exists.rc != 0
 
     - name: NGINX Config for Pterodactyl
       copy:
@@ -158,6 +196,11 @@
         src: /etc/nginx/sites-available/pterodactyl
         dest: /etc/nginx/sites-enabled/pterodactyl
         state: link
+
+    - name: Remove NGINX default site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
 
     - name: Restart Services
       service:
