@@ -95,7 +95,7 @@
     - name: Ensure MySQL pterodactyl user exists
       shell: |
         mysql -u {{ mysql_admin_user }} -p{{ mysql_admin_password }} -e "CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '{{ panel_db_password }}';
-        GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
+        GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'128.0.0.1';
         FLUSH PRIVILEGES;"
       args:
         executable: /bin/bash
@@ -154,19 +154,19 @@
       args:
         chdir: /var/www/pterodactyl
 
-    - name: Check if Admin User exists in DB
-      shell: |
-        mysql -u {{ mysql_admin_user }} -p{{ mysql_admin_password }} -D panel -se "SELECT id FROM users WHERE email='{{ panel_admin_email }}';"
-      args:
-        executable: /bin/bash
-      register: user_exists
-      failed_when: false
+#    - name: Check if Admin User exists in DB
+#      shell: |
+#        mysql -u {{ mysql_admin_user }} -p{{ mysql_admin_password }} -D panel -se "SELECT id FROM users WHERE email='{{ panel_admin_email }}';"
+#      args:
+#        executable: /bin/bash
+#      register: user_exists
+#      failed_when: false
 
-    - name: Create Admin User
-      command: php artisan p:user:make --email="{{ panel_admin_email }}" --username="{{ panel_admin_username }}" --name-first="{{ panel_admin_name_first }}" --name-last="{{ panel_admin_name_last }}" --password="{{ panel_admin_password }}" --admin=1
-      args:
-        chdir: /var/www/pterodactyl
-      when: user_exists.rc != 0
+#    - name: Create Admin User
+#      command: php artisan p:user:make --email="{{ panel_admin_email }}" --username="{{ panel_admin_username }}" --name-first="{{ panel_admin_name_first }}" --name-last="{{ panel_admin_name_last }}" --password="{{ panel_admin_password }}" --admin=1
+#      args:
+#        chdir: /var/www/pterodactyl
+#      when: user_exists.rc != 0
 
     - name: NGINX Config for Pterodactyl
       copy:
@@ -214,13 +214,18 @@
       debug:
         msg: "Pterodactyl Panel setup complete! Access via http://{{ domain_name }}"
 
-- name: Install Pterodactyl Wings Daemon
-  hosts: wings
-  become: true
+    - name: Install Pterodactyl Wings Daemon
+      hosts: wings
+      become: true
 
-  tasks:
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_installed
+      ignore_errors: yes
+
     - name: Install Docker
       shell: curl -sSL https://get.docker.com/ | bash
+      when: docker_installed.rc != 0
 
     - name: Enable and start Docker
       service:
