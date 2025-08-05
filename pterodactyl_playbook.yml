@@ -3,9 +3,8 @@
   hosts: pterodactyl
   become: true
 
-  vars:
-    panel_db_password: StrongPasswordHere
-    domain_name: your-domain.com
+  vars_files:
+    - gameserver_vault.yml
 
   pre_tasks:
     - name: Install PyMySQL system package
@@ -71,12 +70,16 @@
         state: present
 
     - name: Create MySQL user
+      become: true
+      become_user: mysql
       mysql_user:
         name: pterodactyl
         password: "{{ panel_db_password }}"
         priv: 'panel.*:ALL'
         host: '127.0.0.1'
         state: present
+        login_user: sovi 
+        login_unix_socket: /var/run/mysqld/mysqld.sock
 
     - name: Download Pterodactyl Panel
       get_url:
